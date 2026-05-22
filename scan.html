@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title><?= PARTY_NAME ?> · 입장 스캐너</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  :root {
+    --bg:       #0f0f1a;
+    --surface:  #1a1a2e;
+    --accent:   #e94560;
+    --success:  #00c851;
+    --warn:     #ffbb33;
+    --danger:   #ff4444;
+    --text:     #f0f0f0;
+    --muted:    #888;
+    --radius:   16px;
+  }
+
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: 'Apple SD Gothic Neo', Malgun Gothic, Arial, sans-serif;
+  }
+
+  /* ── 레이아웃 ── */
+  #layout {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100dvh;
+  }
+
+  /* ── 헤더 ── */
+  header {
+    background: var(--surface);
+    padding: 14px 20px 12px;
+    border-bottom: 1px solid #222;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  header h1 { font-size: 1rem; font-weight: 700; color: var(--accent); }
+  .header-stats {
+    display: flex; gap: 16px; font-size: 0.8rem; color: var(--muted);
+  }
+  .stat-val { color: var(--text); font-weight: 700; }
+
+  /* ── 카메라 뷰 ── */
+  #cameraWrap {
+    position: relative;
+    width: 100%;
+    background: #000;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  #reader {
+    width: 100% !important;
+    height: 100% !important;
+  }
+  #reader video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+  }
+  /* hide html5-qrcode default UI */
+  #reader img, #reader select, #reader button,
+  #reader__dashboard, #reader__dashboard_section,
+  #reader__scan_region img { display: none !important; }
+  #reader__scan_region { height: 100% !important; }
+
+  /* 스캔 가이드 오버레이 */
+  #overlay {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .scan-frame {
+    width: 220px; height: 220px;
+    border-radius: 20px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
+    position: relative;
+  }
+  .scan-frame::before, .scan-frame::after,
+  .scan-corner-bl, .scan-corner-br {
+    content: '';
+    position: absolute;
+    width: 36px; height: 36px;
+    border-color: #fff;
+    border-style: solid;
+  }
+  .scan-frame::before { top:0; left:0;   border-width:4px 0 0 4px; border-radius:16px 0 0 0; }
+  .scan-frame::after  { top:0; right:0;  border-width:4px 4px 0 0; border-radius:0 16px 0 0; }
+  .scan-corner-bl     { bottom:0; left:0;  border-width:0 0 4px 4px; border-radius:0 0 0 16px; }
+  .scan-corner-br     { bottom:0; right:0; border-width:0 4px 4px 0; border-radius:0 0 16px 0; }
+
+  .scan-line {
+    position: absolute;
+    left: 4px; right: 4px; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: scanLine 2s ease-in-out infinite;
+    border-radius: 1px;
+  }
+  @keyframes scanLine {
+    0%   { top: 10px; opacity: 1; }
+    50%  { top: 200px; opacity: 1; }
+    100% { top: 10px; opacity: 1; }
+  }
+
+  /* ── 결과 팝업 ── */
+  #resultModal {
+    display: none;
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,0.7);
+    align-items: center; justify-content: center;
+    animation: fadeIn .2s;
+  }
+  #resultModal.show { display: flex; }
+  @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+
+  .result-card {
+    background: var(--surface);
+    border-radius: 24px;
+    padding: 36px 32px;
+    text-align: center;
+    width: 88%; max-width: 360px;
+    border: 2px solid transparent;
+    animation: scaleIn .25s ease;
+  }
+  @keyframes scaleIn { from { transform:scale(.85); opacity:0 } to { transform:scale(1); opacity:1 } }
+
+  .result-card.success { border-color: var(--success); }
+  .result-card.warn    { border-color: var(--warn); }
+  .result-card.danger  { border-color: var(--danger); }
+
+  .result-icon { font-size: 64px; margin-bottom: 12px; line-height: 1; }
+  .result-name { font-size: 28px; font-weight: 800; margin-bottom: 6px; }
+  .result-sub  { font-size: 14px; color: var(--muted); margin-bottom: 24px; line-height: 1.6; }
+
+  .result-card.success .result-name { color: var(--success); }
+  .result-card.warn    .result-name { color: var(--warn); }
+  .result-card.danger  .result-name { color: var(--danger); }
+
+  .progress-ring {
+    width: 100%; height: 6px;
+    background: #333; border-radius: 3px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; border-radius: 3px;
+    animation: shrink 2.5s linear forwards;
+  }
+  .success .progress-fill { background: var(--success); }
+  .warn    .progress-fill { background: var(--warn); }
+  .danger  .progress-fill { background: var(--danger); }
+
+  @keyframes shrink { from { width: 100% } to { width: 0% } }
+
+  /* ── 하단: 최근 체크인 ── */
+  #recentPanel {
+    background: var(--surface);
+    border-top: 1px solid #222;
+    padding: 12px 16px;
+    max-height: 170px;
+    overflow-y: auto;
+  }
+  .recent-title {
+    font-size: 0.75rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .recent-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    font-size: 0.9rem;
+    animation: slideIn .3s ease;
+  }
+  .recent-item:last-child { border-bottom: none; }
+  @keyframes slideIn { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:translateY(0) } }
+  .recent-name { font-weight: 600; }
+  .recent-time { font-size: 0.75rem; color: var(--muted); }
+
+  /* ── 로딩 ── */
+  #loadingOverlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px;
+  }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 3px solid #333;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  #loadingOverlay p { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- 로딩 -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <p>카메라 초기화 중...</p>
+</div>
+
+<!-- 메인 레이아웃 -->
+<div id="layout">
+
+  <!-- 헤더 -->
+  <header>
+    <h1>📷 <?= PARTY_NAME ?></h1>
+    <div class="header-stats">
+      <span>체크인 <span class="stat-val" id="statIn">-</span>명</span>
+      <span>전체 <span class="stat-val" id="statTotal">-</span>명</span>
+    </div>
+  </header>
+
+  <!-- 카메라 -->
+  <div id="cameraWrap">
+    <div id="reader"></div>
+    <div id="overlay">
+      <div class="scan-frame">
+        <div class="scan-corner-bl"></div>
+        <div class="scan-corner-br"></div>
+        <div class="scan-line"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 최근 체크인 -->
+  <div id="recentPanel">
+    <div class="recent-title">최근 체크인</div>
+    <div id="recentList">
+      <div style="color:var(--muted);font-size:13px;padding:8px 0">스캔을 시작하면 여기에 기록됩니다</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- 결과 팝업 -->
+<div id="resultModal">
+  <div class="result-card" id="resultCard">
+    <div class="result-icon" id="resultIcon"></div>
+    <div class="result-name" id="resultName"></div>
+    <div class="result-sub"  id="resultSub"></div>
+    <div class="progress-ring"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+</div>
+
+<script>
+// ── 상태 ──────────────────────────────────────────────
+let isProcessing = false;
+let statsIn = 0, statsTotal = 0;
+const recentCheckins = [];
+
+// ── 체크인 처리 ───────────────────────────────────────
+function onQrScanned(decodedText) {
+  if (isProcessing) return;
+
+  // QR에서 token 추출: URL의 token 파라미터 또는 원본 텍스트
+  let token = null;
+  try {
+    const url = new URL(decodedText);
+    token = url.searchParams.get('token');
+  } catch {
+    // URL이 아니면 텍스트 자체를 token으로
+    token = decodedText.trim();
+  }
+  if (!token) return;
+
+  isProcessing = true;
+
+  // 진동 피드백 (지원 기기)
+  if (navigator.vibrate) navigator.vibrate(50);
+
+  google.script.run
+    .withSuccessHandler(showResult)
+    .withFailureHandler(function(err) {
+      showResult({ ok: false, error: '서버 오류: ' + (err.message || err) });
+    })
+    .processCheckin(token);
+}
+
+// ── 결과 표시 ─────────────────────────────────────────
+function showResult(result) {
+  const modal = document.getElementById('resultModal');
+  const card  = document.getElementById('resultCard');
+  const icon  = document.getElementById('resultIcon');
+  const name  = document.getElementById('resultName');
+  const sub   = document.getElementById('resultSub');
+
+  card.className = 'result-card';
+
+  if (result.ok) {
+    card.classList.add('success');
+    icon.textContent = '✅';
+    name.textContent = result.name;
+    sub.textContent  = '입장이 확인되었습니다!';
+
+    // 통계 업데이트
+    statsIn++;
+    document.getElementById('statIn').textContent = statsIn;
+
+    // 최근 목록 추가
+    addRecent(result.name);
+
+    if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+
+  } else if (result.alreadyCheckedIn) {
+    card.classList.add('warn');
+    icon.textContent = '⚠️';
+    name.textContent = result.name;
+    sub.textContent  = '이미 입장 처리된 분입니다\n(' + (result.checkedInAt || '') + ')';
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 100]);
+
+  } else {
+    card.classList.add('danger');
+    icon.textContent = '❌';
+    name.textContent = '확인 불가';
+    sub.textContent  = result.error || '등록되지 않은 QR입니다';
+    if (navigator.vibrate) navigator.vibrate(300);
+  }
+
+  modal.classList.add('show');
+
+  // 2.5초 후 자동 닫기
+  const fill = document.getElementById('progressFill');
+  fill.style.animation = 'none';
+  fill.offsetHeight; // reflow
+  fill.style.animation = 'shrink 2.5s linear forwards';
+
+  setTimeout(() => {
+    modal.classList.remove('show');
+    isProcessing = false;
+  }, 2500);
+}
+
+// ── 최근 체크인 목록 ──────────────────────────────────
+function addRecent(name) {
+  const now = new Date().toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  recentCheckins.unshift({ name, time: now });
+  if (recentCheckins.length > 15) recentCheckins.pop();
+
+  const list = document.getElementById('recentList');
+  list.innerHTML = recentCheckins.map(r => `
+    <div class="recent-item">
+      <span class="recent-name">✅ ${r.name}</span>
+      <span class="recent-time">${r.time}</span>
+    </div>
+  `).join('');
+}
+
+// ── 통계 로드 ─────────────────────────────────────────
+// (초기 로드 시 현재 체크인 수 가져오기 — 선택사항)
+// google.script.run으로 시트 통계를 가져올 수도 있지만
+// 실시간 세션 카운터로 심플하게 유지
+
+// ── QR 스캐너 초기화 ──────────────────────────────────
+function startScanner() {
+  const html5Qr = new Html5Qrcode('reader');
+
+  Html5Qrcode.getCameras().then(cameras => {
+    if (!cameras || cameras.length === 0) {
+      alert('카메라를 찾을 수 없습니다.');
+      return;
+    }
+
+    // 후면 카메라 우선 선택
+    const backCam = cameras.find(c =>
+      /back|rear|environment/i.test(c.label)
+    ) || cameras[cameras.length - 1];
+
+    const config = {
+      fps: 15,
+      qrbox: { width: 220, height: 220 },
+      aspectRatio: window.innerHeight / window.innerWidth,
+      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    };
+
+    html5Qr.start(
+      backCam.id,
+      config,
+      onQrScanned,
+      () => {} // 스캔 중 오류 무시
+    ).then(() => {
+      document.getElementById('loadingOverlay').style.display = 'none';
+    }).catch(err => {
+      document.getElementById('loadingOverlay').innerHTML =
+        '<p style="color:#e94560;text-align:center;padding:20px">카메라 권한을 허용해 주세요<br><small>' + err + '</small></p>';
+    });
+  }).catch(err => {
+    document.getElementById('loadingOverlay').innerHTML =
+      '<p style="color:#e94560;text-align:center;padding:20px">카메라를 사용할 수 없습니다<br><small>' + err + '</small></p>';
+  });
+}
+
+// 결과 팝업 터치로 닫기
+document.getElementById('resultModal').addEventListener('click', function() {
+  if (!isProcessing) return;
+  this.classList.remove('show');
+  isProcessing = false;
+});
+
+// 시작
+window.addEventListener('load', startScanner);
+</script>
+</body>
+</html>
