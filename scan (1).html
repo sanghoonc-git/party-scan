@@ -170,13 +170,13 @@ async function callCheckin(token) {
 async function onScan(text) {
   if (isProcessing) return;
 
-  let token = null;
+  // QR에는 UUID 토큰만 담겨있음. 혹시 URL 형태면 파라미터 추출
+  let token = text.trim();
   try {
     const u = new URL(text);
-    token = u.searchParams.get('token');
-  } catch {
-    token = text.trim();
-  }
+    const t = u.searchParams.get('token');
+    if (t) token = t;
+  } catch {}
   if (!token) return;
 
   isProcessing = true;
@@ -252,9 +252,8 @@ function initScanner() {
     if (!cams || !cams.length) { alert('카메라를 찾을 수 없습니다.'); return; }
     const cam = cams.find(c => /back|rear|environment/i.test(c.label)) || cams[cams.length - 1];
     return qr.start(cam.id, {
-      fps: 15,
-      qrbox: { width:220, height:220 },
-      aspectRatio: window.innerHeight / window.innerWidth,
+      fps: 30,
+      qrbox: { width:280, height:280 },
       experimentalFeatures: { useBarCodeDetectorIfSupported: true }
     }, onScan, () => {});
   }).then(() => {
