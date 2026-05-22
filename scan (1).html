@@ -253,7 +253,7 @@ function initScanner() {
     const cam = cams.find(c => /back|rear|environment/i.test(c.label)) || cams[cams.length - 1];
     return qr.start(cam.id, {
       fps: 30,
-      qrbox: { width:280, height:280 },
+      qrbox: function(w, h) { return { width: w, height: h }; },
       experimentalFeatures: { useBarCodeDetectorIfSupported: true }
     }, onScan, () => {});
   }).then(() => {
