@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>입장 스캐너</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #0f0f1a; --surface: #1a1a2e;
+    --accent: #e94560; --success: #00c851;
+    --warn: #ffbb33; --danger: #ff4444;
+    --text: #f0f0f0; --muted: #888;
+  }
+  html, body { width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:Arial,sans-serif; }
+
+  #layout { display:grid; grid-template-rows:auto 1fr auto; height:100dvh; }
+
+  header {
+    background:var(--surface); padding:14px 20px;
+    border-bottom:1px solid #222;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  header h1 { font-size:1rem; font-weight:700; color:var(--accent); }
+  .hstats { display:flex; gap:16px; font-size:0.8rem; color:var(--muted); }
+  .hstats b { color:var(--text); }
+
+  #cameraWrap { position:relative; background:#000; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  #reader { width:100% !important; height:100% !important; }
+  #reader video { width:100%!important; height:100%!important; object-fit:cover!important; }
+  #reader img, #reader select, #reader button,
+  #reader__dashboard, #reader__dashboard_section,
+  #reader__scan_region img { display:none!important; }
+  #reader__scan_region { height:100%!important; }
+
+  #overlay { position:absolute; inset:0; pointer-events:none; display:flex; align-items:center; justify-content:center; }
+  .frame { width:220px; height:220px; border-radius:20px; box-shadow:0 0 0 9999px rgba(0,0,0,0.45); position:relative; }
+  .frame::before { content:''; position:absolute; top:0; left:0; width:36px; height:36px; border-top:4px solid #fff; border-left:4px solid #fff; border-radius:16px 0 0 0; }
+  .frame::after  { content:''; position:absolute; top:0; right:0; width:36px; height:36px; border-top:4px solid #fff; border-right:4px solid #fff; border-radius:0 16px 0 0; }
+  .c-bl { position:absolute; bottom:0; left:0; width:36px; height:36px; border-bottom:4px solid #fff; border-left:4px solid #fff; border-radius:0 0 0 16px; }
+  .c-br { position:absolute; bottom:0; right:0; width:36px; height:36px; border-bottom:4px solid #fff; border-right:4px solid #fff; border-radius:0 0 16px 0; }
+  .line { position:absolute; left:4px; right:4px; height:2px; background:linear-gradient(90deg,transparent,var(--accent),transparent); animation:scan 2s ease-in-out infinite; }
+  @keyframes scan { 0%{top:10px} 50%{top:200px} 100%{top:10px} }
+
+  #modal { display:none; position:fixed; inset:0; z-index:50; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; }
+  #modal.show { display:flex; animation:fi .2s; }
+  @keyframes fi { from{opacity:0} to{opacity:1} }
+  .card { background:var(--surface); border-radius:24px; padding:36px 32px; text-align:center; width:88%; max-width:360px; border:2px solid transparent; animation:si .25s ease; }
+  @keyframes si { from{transform:scale(.85);opacity:0} to{transform:scale(1);opacity:1} }
+  .card.success { border-color:var(--success); }
+  .card.warn    { border-color:var(--warn); }
+  .card.danger  { border-color:var(--danger); }
+  .icon { font-size:60px; margin-bottom:12px; line-height:1; }
+  .rname { font-size:26px; font-weight:800; margin-bottom:6px; }
+  .rsub  { font-size:14px; color:var(--muted); margin-bottom:24px; line-height:1.6; white-space:pre-line; }
+  .card.success .rname { color:var(--success); }
+  .card.warn    .rname { color:var(--warn); }
+  .card.danger  .rname { color:var(--danger); }
+  .pbar { height:6px; background:#333; border-radius:3px; overflow:hidden; }
+  .pfill { height:100%; border-radius:3px; animation:sh 2.5s linear forwards; }
+  .success .pfill { background:var(--success); }
+  .warn    .pfill { background:var(--warn); }
+  .danger  .pfill { background:var(--danger); }
+  @keyframes sh { from{width:100%} to{width:0%} }
+
+  #recent { background:var(--surface); border-top:1px solid #222; padding:12px 16px; max-height:170px; overflow-y:auto; }
+  .rtitle { font-size:0.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+  .ritem { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.05); font-size:0.9rem; animation:sl .3s ease; }
+  .ritem:last-child { border-bottom:none; }
+  @keyframes sl { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+  .rname2 { font-weight:600; }
+  .rtime  { font-size:0.75rem; color:var(--muted); }
+
+  #loading { position:fixed; inset:0; z-index:100; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; }
+  .spin { width:40px; height:40px; border:3px solid #333; border-top-color:var(--accent); border-radius:50%; animation:sp .8s linear infinite; }
+  @keyframes sp { to{transform:rotate(360deg)} }
+  #loading p { color:var(--muted); font-size:14px; }
+
+  /* 설정 화면 */
+  #configScreen { position:fixed; inset:0; z-index:200; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; gap:16px; }
+  #configScreen h2 { color:var(--accent); font-size:1.2rem; }
+  #configScreen p  { color:var(--muted); font-size:13px; text-align:center; line-height:1.6; }
+  #configScreen input { width:100%; max-width:480px; padding:12px 16px; background:#1a1a2e; border:1px solid #333; border-radius:10px; color:var(--text); font-size:0.85rem; }
+  #configScreen button { padding:12px 32px; background:var(--accent); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<!-- Apps Script URL 설정 (처음 한 번) -->
+<div id="configScreen">
+  <h2>스캐너 초기 설정</h2>
+  <p>Apps Script 웹 앱 URL을 입력해 주세요.<br>한 번만 입력하면 저장됩니다.</p>
+  <input type="url" id="urlInput" placeholder="https://script.google.com/macros/s/.../exec">
+  <button onclick="saveConfig()">저장 후 시작</button>
+</div>
+
+<!-- 로딩 -->
+<div id="loading" style="display:none">
+  <div class="spin"></div>
+  <p>카메라 초기화 중...</p>
+</div>
+
+<!-- 메인 -->
+<div id="layout" style="display:none">
+  <header>
+    <h1 id="partyTitle">입장 스캐너</h1>
+    <div class="hstats">
+      <span>체크인 <b id="sIn">0</b>명</span>
+    </div>
+  </header>
+  <div id="cameraWrap">
+    <div id="reader"></div>
+    <div id="overlay">
+      <div class="frame">
+        <div class="c-bl"></div><div class="c-br"></div>
+        <div class="line"></div>
+      </div>
+    </div>
+  </div>
+  <div id="recent">
+    <div class="rtitle">최근 체크인</div>
+    <div id="recentList"><div style="color:var(--muted);font-size:13px;padding:8px 0">스캔을 시작하면 기록됩니다</div></div>
+  </div>
+</div>
+
+<!-- 결과 팝업 -->
+<div id="modal">
+  <div class="card" id="card">
+    <div class="icon" id="mIcon"></div>
+    <div class="rname" id="mName"></div>
+    <div class="rsub"  id="mSub"></div>
+    <div class="pbar"><div class="pfill" id="pfill"></div></div>
+  </div>
+</div>
+
+<script>
+// ── 설정 저장/로드 ────────────────────────────────────
+const LS_KEY = 'party_script_url';
+
+function saveConfig() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url.includes('script.google.com')) {
+    alert('올바른 Apps Script URL을 입력해 주세요.');
+    return;
+  }
+  localStorage.setItem(LS_KEY, url);
+  document.getElementById('configScreen').style.display = 'none';
+  initScanner();
+}
+
+function getScriptUrl() {
+  return localStorage.getItem(LS_KEY) || '';
+}
+
+// ── 상태 ─────────────────────────────────────────────
+let isProcessing = false;
+let countIn = 0;
+const recent = [];
+
+// ── 체크인 API 호출 ───────────────────────────────────
+async function callCheckin(token) {
+  const url = getScriptUrl() + '?token=' + encodeURIComponent(token) + '&fmt=json';
+  const res  = await fetch(url, { redirect: 'follow' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return await res.json();
+}
+
+// ── QR 스캔 콜백 ─────────────────────────────────────
+async function onScan(text) {
+  if (isProcessing) return;
+
+  let token = null;
+  try {
+    const u = new URL(text);
+    token = u.searchParams.get('token');
+  } catch {
+    token = text.trim();
+  }
+  if (!token) return;
+
+  isProcessing = true;
+  if (navigator.vibrate) navigator.vibrate(50);
+
+  try {
+    const result = await callCheckin(token);
+    showResult(result);
+  } catch (e) {
+    showResult({ ok: false, error: '서버 연결 실패\n' + e.message });
+  }
+}
+
+// ── 결과 팝업 ─────────────────────────────────────────
+function showResult(r) {
+  const modal = document.getElementById('modal');
+  const card  = document.getElementById('card');
+  card.className = 'card';
+
+  if (r.ok) {
+    card.classList.add('success');
+    document.getElementById('mIcon').textContent = '[OK]';
+    document.getElementById('mName').textContent = r.name;
+    document.getElementById('mSub' ).textContent = '입장이 확인되었습니다!';
+    countIn++;
+    document.getElementById('sIn').textContent = countIn;
+    addRecent(r.name);
+    if (navigator.vibrate) navigator.vibrate([50,30,50]);
+  } else if (r.alreadyCheckedIn) {
+    card.classList.add('warn');
+    document.getElementById('mIcon').textContent = '[!!]';
+    document.getElementById('mName').textContent = r.name;
+    document.getElementById('mSub' ).textContent = '이미 입장 처리된 분입니다\n(' + (r.checkedInAt || '') + ')';
+    if (navigator.vibrate) navigator.vibrate([100,50,100,50,100]);
+  } else {
+    card.classList.add('danger');
+    document.getElementById('mIcon').textContent = '[X]';
+    document.getElementById('mName').textContent = '확인 불가';
+    document.getElementById('mSub' ).textContent = r.error || '등록되지 않은 QR입니다';
+    if (navigator.vibrate) navigator.vibrate(300);
+  }
+
+  modal.classList.add('show');
+  const pf = document.getElementById('pfill');
+  pf.style.animation = 'none'; pf.offsetHeight;
+  pf.style.animation = 'sh 2.5s linear forwards';
+
+  setTimeout(() => { modal.classList.remove('show'); isProcessing = false; }, 2500);
+}
+
+// ── 최근 목록 ─────────────────────────────────────────
+function addRecent(name) {
+  const t = new Date().toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  recent.unshift({ name, t });
+  if (recent.length > 15) recent.pop();
+  document.getElementById('recentList').innerHTML = recent.map(r =>
+    '<div class="ritem"><span class="rname2">OK ' + r.name + '</span><span class="rtime">' + r.t + '</span></div>'
+  ).join('');
+}
+
+// ── 팝업 탭으로 닫기 ─────────────────────────────────
+document.getElementById('modal').addEventListener('click', function() {
+  this.classList.remove('show'); isProcessing = false;
+});
+
+// ── 스캐너 초기화 ─────────────────────────────────────
+function initScanner() {
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('layout' ).style.display = 'none';
+
+  const qr = new Html5Qrcode('reader');
+  Html5Qrcode.getCameras().then(cams => {
+    if (!cams || !cams.length) { alert('카메라를 찾을 수 없습니다.'); return; }
+    const cam = cams.find(c => /back|rear|environment/i.test(c.label)) || cams[cams.length - 1];
+    return qr.start(cam.id, {
+      fps: 15,
+      qrbox: { width:220, height:220 },
+      aspectRatio: window.innerHeight / window.innerWidth,
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    }, onScan, () => {});
+  }).then(() => {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('layout' ).style.display = 'grid';
+  }).catch(err => {
+    document.getElementById('loading').innerHTML =
+      '<p style="color:#e94560;text-align:center;padding:20px">카메라 권한을 허용해 주세요<br><small>' + err + '</small></p>';
+  });
+}
+
+// ── 시작 ─────────────────────────────────────────────
+window.addEventListener('load', function() {
+  const saved = getScriptUrl();
+  if (saved) {
+    document.getElementById('configScreen').style.display = 'none';
+    initScanner();
+  }
+  // URL 없으면 설정 화면 표시
+});
+</script>
+</body>
+</html>
