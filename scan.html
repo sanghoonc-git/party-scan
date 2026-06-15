@@ -1,289 +1,338 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>입장 스캐너</title>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <style>
-* { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
-:root {
-  --bg:#0f0f1a; --surface:#1a1a2e;
-  --accent:#e94560; --success:#00c851;
-  --warn:#ffbb33; --danger:#ff4444;
-  --text:#f0f0f0; --muted:#888;
-}
-html,body { width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:Arial,sans-serif; }
+  :root{
+    --bg:#0a0c10; --ink:#f4f6fb; --muted:#8a93a6;
+    --ok:#1fbf6b; --dup:#f5a623; --err:#ff4d4f; --line:#1c2430;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",sans-serif;
+    overflow:hidden; user-select:none; -webkit-user-select:none;}
+  #app{position:fixed; inset:0; display:flex; flex-direction:column;}
 
-#layout { display:grid; grid-template-rows:auto 1fr auto; height:100dvh; }
+  /* ── 카메라 영역 ── */
+  #stage{position:relative; flex:1; overflow:hidden; background:#000;}
+  #video{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
 
-header { background:var(--surface); padding:14px 20px; border-bottom:1px solid #222; display:flex; align-items:center; justify-content:space-between; }
-header h1 { font-size:1rem; font-weight:700; color:var(--accent); }
-.hstats { font-size:0.85rem; color:var(--muted); }
-.hstats b { color:var(--text); }
+  /* 스캔 가이드 박스 */
+  #reticle{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:min(62vw,360px); aspect-ratio:1; pointer-events:none; z-index:3;}
+  #reticle::before{content:""; position:absolute; inset:0; border-radius:28px;
+    box-shadow:0 0 0 9999px rgba(0,0,0,.42);}
+  .corner{position:absolute; width:38px; height:38px; border:4px solid #fff; opacity:.92;}
+  .corner.tl{top:0;left:0;border-right:0;border-bottom:0;border-top-left-radius:18px;}
+  .corner.tr{top:0;right:0;border-left:0;border-bottom:0;border-top-right-radius:18px;}
+  .corner.bl{bottom:0;left:0;border-right:0;border-top:0;border-bottom-left-radius:18px;}
+  .corner.br{bottom:0;right:0;border-left:0;border-top:0;border-bottom-right-radius:18px;}
+  #scanline{position:absolute; left:8%; right:8%; height:3px; border-radius:3px;
+    background:linear-gradient(90deg,transparent,#fff,transparent);
+    animation:sweep 2.1s ease-in-out infinite; opacity:.85;}
+  @keyframes sweep{0%,100%{top:10%}50%{top:90%}}
+  @media (prefers-reduced-motion:reduce){#scanline{animation:none; top:50%;}}
 
-/* 카메라 */
-#cameraWrap { position:relative; background:#000; overflow:hidden; }
-#video { width:100%; height:100%; object-fit:cover; display:block; }
-#canvas { display:none; }
+  /* ── 풀스크린 결과 플래시 ── */
+  #flash{position:absolute; inset:0; z-index:6; display:flex; align-items:center;
+    justify-content:center; flex-direction:column; gap:10px; text-align:center;
+    opacity:0; pointer-events:none; transition:opacity .12s; padding:24px;}
+  #flash.show{opacity:1;}
+  #flash.ok{background:rgba(31,191,107,.94);}
+  #flash.dup{background:rgba(245,166,35,.94);}
+  #flash.err{background:rgba(255,77,79,.94);}
+  #flashIcon{font-size:84px; line-height:1; font-weight:800;}
+  #flashName{font-size:40px; font-weight:800; letter-spacing:-.02em; word-break:keep-all;}
+  #flashMsg{font-size:20px; font-weight:600; opacity:.92;}
 
-/* 스캔 가이드 오버레이 */
-#overlay { position:absolute; inset:0; pointer-events:none; display:flex; align-items:center; justify-content:center; }
-.frame { width:240px; height:240px; position:relative; box-shadow:0 0 0 9999px rgba(0,0,0,0.4); border-radius:4px; }
-.frame::before { content:''; position:absolute; top:0; left:0; width:40px; height:40px; border-top:4px solid #fff; border-left:4px solid #fff; border-radius:12px 0 0 0; }
-.frame::after  { content:''; position:absolute; top:0; right:0; width:40px; height:40px; border-top:4px solid #fff; border-right:4px solid #fff; border-radius:0 12px 0 0; }
-.c-bl { position:absolute; bottom:0; left:0; width:40px; height:40px; border-bottom:4px solid #fff; border-left:4px solid #fff; border-radius:0 0 0 12px; }
-.c-br { position:absolute; bottom:0; right:0; width:40px; height:40px; border-bottom:4px solid #fff; border-right:4px solid #fff; border-radius:0 0 12px 0; }
-.line { position:absolute; left:0; right:0; height:3px; background:linear-gradient(90deg,transparent,var(--accent),transparent); animation:scan 2s ease-in-out infinite; border-radius:2px; }
-@keyframes scan { 0%{top:4px;opacity:1} 50%{top:230px;opacity:1} 100%{top:4px;opacity:1} }
+  /* ── 하단 상태바 ── */
+  #bar{flex:0 0 auto; padding:16px 20px calc(16px + env(safe-area-inset-bottom));
+    display:flex; align-items:center; justify-content:space-between; gap:14px;
+    border-top:1px solid var(--line); background:#0c0f15;}
+  #count{display:flex; align-items:baseline; gap:8px;}
+  #countN{font-size:34px; font-weight:800; letter-spacing:-.03em; font-variant-numeric:tabular-nums;}
+  #countLbl{font-size:13px; color:var(--muted); font-weight:600;}
+  #engine{font-size:11px; color:var(--muted); font-weight:600; padding:5px 9px;
+    border:1px solid var(--line); border-radius:999px; white-space:nowrap;}
+  #status{font-size:13px; color:var(--muted); font-weight:600;}
+  .dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px;
+    background:var(--err); vertical-align:middle;}
+  .dot.live{background:var(--ok); box-shadow:0 0 8px var(--ok);}
 
-/* 결과 팝업 */
-#modal { display:none; position:fixed; inset:0; z-index:50; background:rgba(0,0,0,0.75); align-items:center; justify-content:center; }
-#modal.show { display:flex; animation:fi .2s; }
-@keyframes fi { from{opacity:0} to{opacity:1} }
-.card { background:var(--surface); border-radius:24px; padding:36px 32px; text-align:center; width:88%; max-width:360px; border:2px solid transparent; animation:si .2s ease; }
-@keyframes si { from{transform:scale(.88);opacity:0} to{transform:scale(1);opacity:1} }
-.card.ok   { border-color:var(--success); }
-.card.dup  { border-color:var(--warn); }
-.card.err  { border-color:var(--danger); }
-.micon { font-size:56px; margin-bottom:12px; line-height:1; }
-.mname { font-size:26px; font-weight:800; margin-bottom:6px; }
-.msub  { font-size:14px; color:var(--muted); margin-bottom:24px; line-height:1.6; white-space:pre-line; }
-.card.ok  .mname { color:var(--success); }
-.card.dup .mname { color:var(--warn); }
-.card.err .mname { color:var(--danger); }
-.pbar  { height:6px; background:#333; border-radius:3px; overflow:hidden; }
-.pfill { height:100%; border-radius:3px; }
-.ok  .pfill { background:var(--success); animation:sh 2.5s linear forwards; }
-.dup .pfill { background:var(--warn);    animation:sh 2.5s linear forwards; }
-.err .pfill { background:var(--danger);  animation:sh 2.5s linear forwards; }
-@keyframes sh { from{width:100%} to{width:0%} }
-
-/* 최근 체크인 */
-#recent { background:var(--surface); border-top:1px solid #222; padding:12px 16px; max-height:160px; overflow-y:auto; }
-.rtitle { font-size:0.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
-.ritem  { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.05); font-size:0.88rem; }
-.ritem:last-child { border-bottom:none; }
-.rn { font-weight:600; }
-.rt { font-size:0.75rem; color:var(--muted); }
-
-/* 설정 화면 */
-#cfg { position:fixed; inset:0; z-index:200; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; gap:16px; }
-#cfg h2 { color:var(--accent); font-size:1.2rem; }
-#cfg p  { color:var(--muted); font-size:13px; text-align:center; line-height:1.7; }
-#cfg input  { width:100%; max-width:480px; padding:12px 16px; background:#1a1a2e; border:1px solid #333; border-radius:10px; color:var(--text); font-size:0.85rem; }
-#cfg button { padding:12px 32px; background:var(--accent); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; }
-
-/* 로딩 */
-#loading { position:fixed; inset:0; z-index:100; background:var(--bg); display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; }
-.spin { width:40px; height:40px; border:3px solid #333; border-top-color:var(--accent); border-radius:50%; animation:sp .8s linear infinite; }
-@keyframes sp { to{transform:rotate(360deg)} }
+  /* ── 시작/오류 오버레이 ── */
+  #gate{position:absolute; inset:0; z-index:9; background:var(--bg);
+    display:flex; align-items:center; justify-content:center; flex-direction:column;
+    gap:20px; padding:32px; text-align:center;}
+  #gate h1{font-size:24px; font-weight:800; letter-spacing:-.02em;}
+  #gate p{font-size:15px; color:var(--muted); max-width:340px; line-height:1.5;}
+  #startBtn{font:inherit; font-size:18px; font-weight:700; color:#0a0c10;
+    background:#fff; border:0; border-radius:14px; padding:16px 40px; cursor:pointer;}
+  #startBtn:active{transform:scale(.97);}
+  .hidden{display:none !important;}
 </style>
 </head>
 <body>
+<div id="app">
+  <div id="stage">
+    <video id="video" playsinline autoplay muted></video>
 
-<div id="cfg">
-  <h2>스캐너 초기 설정</h2>
-  <p>Apps Script 웹 앱 URL을 입력해 주세요.<br>한 번만 입력하면 저장됩니다.</p>
-  <input type="url" id="urlInput" placeholder="https://script.google.com/macros/s/.../exec">
-  <button onclick="saveConfig()">저장 후 시작</button>
-</div>
+    <div id="reticle">
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+      <div id="scanline"></div>
+    </div>
 
-<div id="loading">
-  <div class="spin"></div>
-  <p id="loadMsg">카메라 시작 중...</p>
-</div>
+    <div id="flash">
+      <div id="flashIcon"></div>
+      <div id="flashName"></div>
+      <div id="flashMsg"></div>
+    </div>
 
-<div id="layout" style="display:none">
-  <header>
-    <h1>입장 스캐너</h1>
-    <div class="hstats">체크인 <b id="sIn">0</b>명</div>
-  </header>
-  <div id="cameraWrap">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
-    <div id="overlay">
-      <div class="frame">
-        <div class="c-bl"></div>
-        <div class="c-br"></div>
-        <div class="line"></div>
-      </div>
+    <div id="gate">
+      <h1>입장 스캐너</h1>
+      <p>아래 버튼을 누르고 카메라 권한을 허용하세요. QR을 가이드 박스 안에 맞추면 자동으로 인식됩니다.</p>
+      <button id="startBtn">스캔 시작</button>
     </div>
   </div>
-  <div id="recent">
-    <div class="rtitle">최근 체크인</div>
-    <div id="recentList"><div style="color:var(--muted);font-size:13px;padding:6px 0">스캔을 시작하면 기록됩니다</div></div>
+
+  <div id="bar">
+    <div id="count">
+      <span id="countN">0</span>
+      <span id="countLbl">명 입장</span>
+    </div>
+    <div id="status"><span class="dot" id="liveDot"></span><span id="statusTxt">대기 중</span></div>
+    <span id="engine">엔진 확인 중</span>
   </div>
 </div>
 
-<div id="modal">
-  <div class="card" id="card">
-    <div class="micon" id="micon"></div>
-    <div class="mname" id="mname"></div>
-    <div class="msub"  id="msub"></div>
-    <div class="pbar"><div class="pfill" id="pfill"></div></div>
-  </div>
-</div>
-
+<!-- jsQR fallback (BarcodeDetector 미지원 기기 전용) -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
-const LS_KEY = 'party_script_url_v2';
-let isProcessing = false;
-let scanLoop = null;
-let countIn = 0;
-const recentList = [];
+(function(){
+  "use strict";
 
-// ── 설정 ─────────────────────────────────────────────
-function saveConfig() {
-  const url = document.getElementById('urlInput').value.trim();
-  if (!url.includes('script.google.com')) { alert('올바른 Apps Script URL을 입력해 주세요.'); return; }
-  localStorage.setItem(LS_KEY, url);
-  document.getElementById('cfg').style.display = 'none';
-  startCamera();
-}
-function getUrl() { return localStorage.getItem(LS_KEY) || ''; }
+  // ── 설정 ──
+  // GAS 웹앱 배포 URL (.../exec 로 끝나는 주소)
+  // Apps Script 편집기 > 배포 > 배포 관리 에서 복사
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzzchq5yOgDMyBwXQ5Cv7dK7zrfeOiPyiFgk0mWq1rMjpYfJcgDHuUGzrC5zTEKlYkEmw/exec';
 
-// ── 카메라 시작 ───────────────────────────────────────
-async function startCamera() {
-  document.getElementById('loading').style.display = 'flex';
+  // ── DOM ──
+  const video   = document.getElementById('video');
+  const flash   = document.getElementById('flash');
+  const fIcon   = document.getElementById('flashIcon');
+  const fName   = document.getElementById('flashName');
+  const fMsg    = document.getElementById('flashMsg');
+  const gate    = document.getElementById('gate');
+  const startBtn= document.getElementById('startBtn');
+  const countN  = document.getElementById('countN');
+  const engineEl= document.getElementById('engine');
+  const statusTxt = document.getElementById('statusTxt');
+  const liveDot = document.getElementById('liveDot');
 
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 1920 },
-        height: { ideal: 1080 },
-      },
-      audio: false
-    });
+  // ── 상태 ──
+  let detector = null;          // BarcodeDetector 인스턴스 (있으면)
+  let useNative = false;
+  let stream = null;
+  let scanning = false;
+  let inflight = false;         // 서버 호출 진행 중 여부
+  let sessionCount = 0;
+  let lastToken = '';           // 직전 인식 토큰
+  let lastTokenAt = 0;          // 직전 인식 시각
+  const DUP_WINDOW = 3000;      // 같은 토큰 무시 시간(ms)
 
-    const video = document.getElementById('video');
-    video.srcObject = stream;
-    await new Promise(r => video.onloadedmetadata = r);
-    await video.play();
+  // jsQR용 canvas
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('layout').style.display  = 'grid';
-
-    startScanLoop();
-  } catch(e) {
-    document.getElementById('loadMsg').textContent = '카메라 권한을 허용해 주세요: ' + e.message;
+  // ── 사운드 (Web Audio) ──
+  let actx = null;
+  function beep(type){
+    try{
+      if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)();
+      const seq = type==='ok'   ? [[880,0,.10]]
+                : type==='dup'  ? [[660,0,.09],[660,.13,.09]]
+                : /* err */       [[180,0,.30]];
+      seq.forEach(([f,t,d])=>{
+        const o=actx.createOscillator(), g=actx.createGain();
+        o.type='square'; o.frequency.value=f;
+        o.connect(g); g.connect(actx.destination);
+        const s=actx.currentTime+t;
+        g.gain.setValueAtTime(.0001,s);
+        g.gain.exponentialRampToValueAtTime(.25,s+.01);
+        g.gain.exponentialRampToValueAtTime(.0001,s+d);
+        o.start(s); o.stop(s+d+.02);
+      });
+    }catch(e){}
   }
-}
+  function buzz(ms){ if(navigator.vibrate) navigator.vibrate(ms); }
 
-// ── 스캔 루프 (jsQR) ──────────────────────────────────
-function startScanLoop() {
-  const video  = document.getElementById('video');
-  const canvas = document.getElementById('canvas');
-  const ctx    = canvas.getContext('2d', { willReadFrequently: true });
+  // ── 카메라 시작 ──
+  async function start(){
+    if(GAS_URL.indexOf('여기에') !== -1){
+      gateError('GAS_URL이 설정되지 않았어요. scan.html 상단의 GAS_URL을 배포된 웹앱 주소로 바꿔주세요.');
+      return;
+    }
+    gate.querySelector('p').textContent = '카메라 여는 중…';
+    startBtn.disabled = true;
 
-  function tick() {
-    scanLoop = requestAnimationFrame(tick);
-    if (isProcessing) return;
-    if (video.readyState < 2) return;
+    // BarcodeDetector 지원 확인
+    try{
+      if('BarcodeDetector' in window){
+        const fmts = await window.BarcodeDetector.getSupportedFormats();
+        if(fmts.includes('qr_code')){
+          detector = new window.BarcodeDetector({ formats:['qr_code'] });
+          useNative = true;
+        }
+      }
+    }catch(e){ useNative = false; }
+    engineEl.textContent = useNative ? '네이티브 ⚡' : 'jsQR';
 
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    if (!w || !h) return;
+    // 후면 카메라 + 적정 해상도
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio:false,
+        video:{
+          facingMode:{ ideal:'environment' },
+          width:{ ideal:1280 }, height:{ ideal:720 }
+        }
+      });
+    }catch(err){
+      gateError('카메라를 열 수 없습니다. 권한을 허용했는지, 다른 앱이 카메라를 쓰고 있지 않은지 확인하세요.');
+      return;
+    }
 
-    canvas.width  = w;
-    canvas.height = h;
-    ctx.drawImage(video, 0, 0, w, h);
+    video.srcObject = stream;
+    await video.play().catch(()=>{});
 
-    const imageData = ctx.getImageData(0, 0, w, h);
-    const code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
+    // 줌 1.0 고정 + 연속 포커스
+    await lockCamera();
 
-    if (code && code.data) {
-      handleScan(code.data);
+    gate.classList.add('hidden');
+    liveDot.classList.add('live');
+    statusTxt.textContent = '스캔 중';
+    scanning = true;
+    loop();
+  }
+
+  // 땡겨진 줌/포커스 잡기
+  async function lockCamera(){
+    try{
+      const track = stream.getVideoTracks()[0];
+      if(!track || !track.getCapabilities) return;
+      const caps = track.getCapabilities();
+      const adv = [];
+      if(caps.zoom)        adv.push({ zoom: caps.zoom.min || 1 });
+      if(caps.focusMode && caps.focusMode.includes('continuous'))
+        adv.push({ focusMode:'continuous' });
+      if(adv.length) await track.applyConstraints({ advanced: adv });
+    }catch(e){ /* 일부 기기는 미지원 — 무시 */ }
+  }
+
+  // ── 스캔 루프 ──
+  async function loop(){
+    if(!scanning){ return; }
+    let raw = null;
+    try{
+      if(useNative){
+        const codes = await detector.detect(video);
+        if(codes && codes.length) raw = codes[0].rawValue;
+      }else{
+        raw = decodeJsQR();
+      }
+    }catch(e){ /* 프레임 스킵 */ }
+
+    if(raw) handleCode(raw.trim());
+    requestAnimationFrame(loop);
+  }
+
+  function decodeJsQR(){
+    const w = video.videoWidth, h = video.videoHeight;
+    if(!w || !h) return null;
+    // 중앙 정사각 영역만 잘라서 디코딩 → 빠르고 정확
+    const side = Math.min(w,h);
+    const sx = (w-side)/2, sy = (h-side)/2;
+    const size = 480; // 다운스케일
+    canvas.width = size; canvas.height = size;
+    ctx.drawImage(video, sx, sy, side, side, 0, 0, size, size);
+    const img = ctx.getImageData(0,0,size,size);
+    const code = window.jsQR(img.data, size, size, { inversionAttempts:'dontInvert' });
+    return code ? code.data : null;
+  }
+
+  // ── 코드 처리 ──
+  function handleCode(token){
+    const now = Date.now();
+    if(!token) return;
+    // 같은 토큰 연속 무시
+    if(token === lastToken && now - lastTokenAt < DUP_WINDOW) return;
+    // 서버 호출이 밀려있으면 새 호출 막되, 다른 토큰이면 통과
+    if(inflight && token === lastToken) return;
+
+    lastToken = token; lastTokenAt = now;
+    inflight = true;
+
+    // GAS 백엔드 호출 (GitHub Pages → GAS 웹앱 GET 요청)
+    const url = GAS_URL + '?action=checkin&token=' + encodeURIComponent(token);
+    fetch(url)
+      .then(r => r.json())
+      .then(onResult)
+      .catch(onFail);
+  }
+
+  function onResult(res){
+    inflight = false;
+    res = res || {};
+    // status: 'ok'(정상) | 'already'(중복) | 'notfound'(미등록)
+    const st = res.status || (res.ok ? 'ok' : 'notfound');
+    if(st === 'ok'){
+      sessionCount++;
+      countN.textContent = sessionCount;
+      showFlash('ok','✓', res.name || '입장 완료', '정상 입장');
+      beep('ok'); buzz(60);
+    }else if(st === 'already'){
+      showFlash('dup','!', res.name || '이미 입장', '이미 체크인됨' + (res.checkedAt? ' · '+res.checkedAt : ''));
+      beep('dup'); buzz([40,40,40]);
+    }else{
+      showFlash('err','✕', '미등록 QR', '명단에 없는 코드입니다');
+      beep('err'); buzz(200);
     }
   }
-  tick();
-}
 
-// ── 스캔 처리 ─────────────────────────────────────────
-async function handleScan(text) {
-  if (isProcessing) return;
-
-  let token = text.trim();
-  try {
-    const u = new URL(text);
-    const t = u.searchParams.get('token');
-    if (t) token = t;
-  } catch {}
-  if (!token) return;
-
-  isProcessing = true;
-  if (navigator.vibrate) navigator.vibrate(40);
-
-  try {
-    const apiUrl = getUrl() + '?token=' + encodeURIComponent(token) + '&fmt=json';
-    const res    = await fetch(apiUrl, { redirect: 'follow' });
-    const result = await res.json();
-    showResult(result);
-  } catch(e) {
-    showResult({ ok: false, error: '서버 오류\n' + e.message });
-  }
-}
-
-// ── 결과 팝업 ─────────────────────────────────────────
-function showResult(r) {
-  const modal = document.getElementById('modal');
-  const card  = document.getElementById('card');
-  card.className = 'card';
-
-  if (r.ok) {
-    card.classList.add('ok');
-    document.getElementById('micon').textContent = '✓';
-    document.getElementById('mname').textContent = r.name;
-    document.getElementById('msub' ).textContent = '입장이 확인되었습니다!';
-    countIn++;
-    document.getElementById('sIn').textContent = countIn;
-    addRecent(r.name);
-    if (navigator.vibrate) navigator.vibrate([40, 20, 40]);
-  } else if (r.alreadyCheckedIn) {
-    card.classList.add('dup');
-    document.getElementById('micon').textContent = '!';
-    document.getElementById('mname').textContent = r.name;
-    document.getElementById('msub' ).textContent = '이미 입장 처리된 분입니다\n(' + (r.checkedInAt || '') + ')';
-    if (navigator.vibrate) navigator.vibrate([100, 40, 100]);
-  } else {
-    card.classList.add('err');
-    document.getElementById('micon').textContent = '✕';
-    document.getElementById('mname').textContent = '확인 불가';
-    document.getElementById('msub' ).textContent = r.error || '등록되지 않은 QR입니다';
-    if (navigator.vibrate) navigator.vibrate(200);
+  function onFail(err){
+    inflight = false;
+    showFlash('err','✕', '오류', '네트워크 확인 후 다시 스캔');
+    beep('err'); buzz(200);
   }
 
-  modal.classList.add('show');
-  const pf = document.getElementById('pfill');
-  pf.style.animation = 'none';
-  void pf.offsetHeight;
-  pf.style.animation = 'sh 2.5s linear forwards';
-
-  setTimeout(() => { modal.classList.remove('show'); isProcessing = false; }, 2500);
-}
-
-// ── 최근 목록 ─────────────────────────────────────────
-function addRecent(name) {
-  const t = new Date().toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-  recentList.unshift({ name, t });
-  if (recentList.length > 15) recentList.pop();
-  document.getElementById('recentList').innerHTML = recentList
-    .map(r => `<div class="ritem"><span class="rn">✓ ${r.name}</span><span class="rt">${r.t}</span></div>`)
-    .join('');
-}
-
-document.getElementById('modal').addEventListener('click', function() {
-  this.classList.remove('show');
-  isProcessing = false;
-});
-
-// ── 시작 ─────────────────────────────────────────────
-window.addEventListener('load', () => {
-  if (getUrl()) {
-    document.getElementById('cfg').style.display = 'none';
-    startCamera();
+  // ── 결과 플래시 ──
+  let flashTimer = null;
+  function showFlash(kind, icon, name, msg){
+    flash.className = 'show ' + kind;
+    fIcon.textContent = icon;
+    fName.textContent = name;
+    fMsg.textContent  = msg;
+    clearTimeout(flashTimer);
+    const dur = kind==='ok' ? 900 : 1400; // 정상은 빠르게 넘김
+    flashTimer = setTimeout(()=>{ flash.className=''; }, dur);
   }
-});
+
+  function gateError(msg){
+    gate.classList.remove('hidden');
+    gate.querySelector('h1').textContent = '카메라 오류';
+    gate.querySelector('p').textContent = msg;
+    startBtn.disabled = false;
+    startBtn.textContent = '다시 시도';
+  }
+
+  // 백그라운드 복귀 시 카메라 재정렬
+  document.addEventListener('visibilitychange', ()=>{
+    if(!document.hidden && stream) lockCamera();
+  });
+
+  startBtn.addEventListener('click', start);
+})();
 </script>
 </body>
 </html>
