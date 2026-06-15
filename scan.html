@@ -7,7 +7,7 @@
 <style>
   :root{
     --bg:#0a0c10; --ink:#f4f6fb; --muted:#8a93a6;
-    --ok:#1fbf6b; --dup:#f5a623; --err:#ff4d4f; --line:#1c2430;
+    --ok:#1fbf6b; --guest:#3b82f6; --dup:#f5a623; --err:#ff4d4f; --line:#1c2430;
   }
   *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
   html,body{height:100%; background:var(--bg); color:var(--ink);
@@ -40,20 +40,27 @@
     justify-content:center; flex-direction:column; gap:10px; text-align:center;
     opacity:0; pointer-events:none; transition:opacity .12s; padding:24px;}
   #flash.show{opacity:1;}
-  #flash.ok{background:rgba(31,191,107,.94);}
+  #flash.emp{background:rgba(31,191,107,.95);}
+  #flash.guest{background:rgba(59,130,246,.95);}
   #flash.dup{background:rgba(245,166,35,.94);}
   #flash.err{background:rgba(255,77,79,.94);}
   #flashIcon{font-size:84px; line-height:1; font-weight:800;}
   #flashName{font-size:40px; font-weight:800; letter-spacing:-.02em; word-break:keep-all;}
+  #flashBadge{font-size:26px; font-weight:800; letter-spacing:-.01em; word-break:keep-all;
+    padding:10px 26px; border-radius:999px; background:rgba(0,0,0,.20);
+    border:2px solid rgba(255,255,255,.55);}
+  #flashBadge:empty{display:none;}
   #flashMsg{font-size:20px; font-weight:600; opacity:.92;}
 
   /* ── 하단 상태바 ── */
   #bar{flex:0 0 auto; padding:16px 20px calc(16px + env(safe-area-inset-bottom));
     display:flex; align-items:center; justify-content:space-between; gap:14px;
     border-top:1px solid var(--line); background:#0c0f15;}
-  #count{display:flex; align-items:baseline; gap:8px;}
-  #countN{font-size:34px; font-weight:800; letter-spacing:-.03em; font-variant-numeric:tabular-nums;}
-  #countLbl{font-size:13px; color:var(--muted); font-weight:600;}
+  #counts{display:flex; align-items:center; gap:18px;}
+  .countBox{display:flex; align-items:baseline; gap:7px;}
+  .countBox .n{font-size:34px; font-weight:800; letter-spacing:-.03em; font-variant-numeric:tabular-nums;}
+  .countBox .lbl{font-size:13px; color:var(--muted); font-weight:600;}
+  #ticketN{color:var(--guest);}
   #engine{font-size:11px; color:var(--muted); font-weight:600; padding:5px 9px;
     border:1px solid var(--line); border-radius:999px; white-space:nowrap;}
   #status{font-size:13px; color:var(--muted); font-weight:600;}
@@ -87,6 +94,7 @@
     <div id="flash">
       <div id="flashIcon"></div>
       <div id="flashName"></div>
+      <div id="flashBadge"></div>
       <div id="flashMsg"></div>
     </div>
 
@@ -98,9 +106,15 @@
   </div>
 
   <div id="bar">
-    <div id="count">
-      <span id="countN">0</span>
-      <span id="countLbl">명 입장</span>
+    <div id="counts">
+      <div class="countBox">
+        <span class="n" id="countN">0</span>
+        <span class="lbl">입장</span>
+      </div>
+      <div class="countBox">
+        <span class="n" id="ticketN">0</span>
+        <span class="lbl">🎫 응모권</span>
+      </div>
     </div>
     <div id="status"><span class="dot" id="liveDot"></span><span id="statusTxt">대기 중</span></div>
     <span id="engine">엔진 확인 중</span>
@@ -116,17 +130,19 @@
   // ── 설정 ──
   // GAS 웹앱 배포 URL (.../exec 로 끝나는 주소)
   // Apps Script 편집기 > 배포 > 배포 관리 에서 복사
-  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzzchq5yOgDMyBwXQ5Cv7dK7zrfeOiPyiFgk0mWq1rMjpYfJcgDHuUGzrC5zTEKlYkEmw/exec';
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbwHoTTtLLGpD60b7UDceAiJ0Q7aakUywRgIh0mRP8z3eY9BcckLDCnQoh1T34SazKCXiA/exec';
 
   // ── DOM ──
   const video   = document.getElementById('video');
   const flash   = document.getElementById('flash');
   const fIcon   = document.getElementById('flashIcon');
   const fName   = document.getElementById('flashName');
+  const fBadge  = document.getElementById('flashBadge');
   const fMsg    = document.getElementById('flashMsg');
   const gate    = document.getElementById('gate');
   const startBtn= document.getElementById('startBtn');
   const countN  = document.getElementById('countN');
+  const ticketN = document.getElementById('ticketN');
   const engineEl= document.getElementById('engine');
   const statusTxt = document.getElementById('statusTxt');
   const liveDot = document.getElementById('liveDot');
@@ -138,6 +154,7 @@
   let scanning = false;
   let inflight = false;         // 서버 호출 진행 중 여부
   let sessionCount = 0;
+  let sessionTickets = 0;       // 응모권 지급 대상(직원) 입장 수
   let lastToken = '';           // 직전 인식 토큰
   let lastTokenAt = 0;          // 직전 인식 시각
   const DUP_WINDOW = 3000;      // 같은 토큰 무시 시간(ms)
@@ -151,9 +168,10 @@
   function beep(type){
     try{
       if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)();
-      const seq = type==='ok'   ? [[880,0,.10]]
-                : type==='dup'  ? [[660,0,.09],[660,.13,.09]]
-                : /* err */       [[180,0,.30]];
+      const seq = type==='emp'   ? [[660,0,.08],[880,.09,.13]]   // 상승 2음 = 티켓 지급
+                : type==='guest' ? [[523,0,.13]]                  // 단음 = 입장만
+                : type==='dup'   ? [[660,0,.09],[660,.13,.09]]    // 동일음 2회 = 중복
+                : /* err */        [[180,0,.30]];                 // 저음 부저 = 오류/미등록
       seq.forEach(([f,t,d])=>{
         const o=actx.createOscillator(), g=actx.createGain();
         o.type='square'; o.frequency.value=f;
@@ -285,36 +303,50 @@
     inflight = false;
     res = res || {};
     // status: 'ok'(정상) | 'already'(중복) | 'notfound'(미등록)
+    // type:   'employee'(직원·응모권 대상) | 'guest'(게스트·응모권 없음)
     const st = res.status || (res.ok ? 'ok' : 'notfound');
+    const isEmp = res.type === 'employee';
+
     if(st === 'ok'){
       sessionCount++;
       countN.textContent = sessionCount;
-      showFlash('ok','✓', res.name || '입장 완료', '정상 입장');
-      beep('ok'); buzz(60);
+      if(isEmp){
+        sessionTickets++;
+        ticketN.textContent = sessionTickets;
+        showFlash('emp','✓', res.name || '입장 완료', '🎫 응모권 지급', '직원');
+        beep('emp'); buzz(60);
+      }else{
+        showFlash('guest','✓', res.name || '입장 완료', '응모권 없음', '게스트');
+        beep('guest'); buzz(60);
+      }
     }else if(st === 'already'){
-      showFlash('dup','!', res.name || '이미 입장', '이미 체크인됨' + (res.checkedAt? ' · '+res.checkedAt : ''));
+      const who = isEmp ? '직원 · 이미 지급됨' : '게스트 · 응모권 대상 아님';
+      showFlash('dup','!', res.name || '이미 입장', '이미 체크인됨' + (res.checkedAt? ' · '+res.checkedAt : ''), who);
       beep('dup'); buzz([40,40,40]);
     }else{
-      showFlash('err','✕', '미등록 QR', '명단에 없는 코드입니다');
+      showFlash('err','✕', '미등록 QR', '명단에 없는 코드입니다', '');
       beep('err'); buzz(200);
     }
   }
 
   function onFail(err){
     inflight = false;
-    showFlash('err','✕', '오류', '네트워크 확인 후 다시 스캔');
+    showFlash('err','✕', '오류', '', '네트워크 확인 후 다시 스캔');
     beep('err'); buzz(200);
   }
 
   // ── 결과 플래시 ──
+  // badge: 큰 알약형 안내(응모권 지급 여부 등, 핵심 정보)
+  // msg:   작은 보조 텍스트
   let flashTimer = null;
-  function showFlash(kind, icon, name, msg){
+  function showFlash(kind, icon, name, badge, msg){
     flash.className = 'show ' + kind;
-    fIcon.textContent = icon;
-    fName.textContent = name;
-    fMsg.textContent  = msg;
+    fIcon.textContent  = icon;
+    fName.textContent  = name;
+    fBadge.textContent = badge || '';
+    fMsg.textContent   = msg || '';
     clearTimeout(flashTimer);
-    const dur = kind==='ok' ? 900 : 1400; // 정상은 빠르게 넘김
+    const dur = (kind==='emp' || kind==='guest') ? 1100 : 1500; // 정상은 빠르게, 나머진 좀 더 길게
     flashTimer = setTimeout(()=>{ flash.className=''; }, dur);
   }
 
